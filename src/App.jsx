@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import './App.css';
 import ProblemItem from './ProblemItem';
+import NotesModal from './NotesModal';
 import { initialProblems } from './data';
 import { auth, db } from './firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
@@ -20,6 +21,9 @@ function App() {
   const [missionCount, setMissionCount] = useState(3);
   const [dailyMissions, setDailyMissions] = useState([]);
 
+  // State to manage the notes modal
+  const [editingProblem, setEditingProblem] = useState(null);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -27,15 +31,19 @@ function App() {
         const userDocRef = doc(db, "users", currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
-          setProblemsByTopic(userDocSnap.data().progress);
+          const progressData = userDocSnap.data()?.progress;
+          if (Array.isArray(progressData)) {
+            setProblemsByTopic(progressData);
+          } else {
+            await setDoc(userDocRef, { progress: initialProblems });
+            setProblemsByTopic(initialProblems);
+          }
         } else {
           await setDoc(userDocRef, { progress: initialProblems });
           setProblemsByTopic(initialProblems);
         }
       } else {
         setUser(null);
-        const savedProgress = localStorage.getItem('dsaProgress');
-        setProblemsByTopic(savedProgress ? JSON.parse(savedProgress) : initialProblems);
       }
       setLoading(false);
     });
@@ -43,12 +51,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return; // Only save to firestore if a user is logged in
+    if (!user || !Array.isArray(problemsByTopic)) return;
     const userDocRef = doc(db, "users", user.uid);
     setDoc(userDocRef, { progress: problemsByTopic });
   }, [problemsByTopic, user]);
 
   useEffect(() => {
+    if (!Array.isArray(problemsByTopic)) return;
     const allProblems = problemsByTopic.flatMap(topic => topic.problems);
     const firstUnfinishedIndex = allProblems.findIndex(p => p.status !== 'cleared');
     let nextMissions = [];
@@ -61,16 +70,16 @@ function App() {
 
   const handleStatusChange = (id) => {
     const newProblemsByTopic = problemsByTopic.map(topicSection => {
-        const newProblems = topicSection.problems.map(problem => {
-            if (problem.id === id) {
-                const statuses = ['untouched', 'in-progress', 'cleared'];
-                const currentIndex = statuses.indexOf(problem.status);
-                const nextIndex = (currentIndex + 1) % statuses.length;
-                return { ...problem, status: statuses[nextIndex] };
-            }
-            return problem;
-        });
-        return { ...topicSection, problems: newProblems };
+      const newProblems = topicSection.problems.map(problem => {
+        if (problem.id === id) {
+          const statuses = ['untouched', 'in-progress', 'cleared'];
+          const currentIndex = statuses.indexOf(problem.status);
+          const nextIndex = (currentIndex + 1) % statuses.length;
+          return { ...problem, status: statuses[nextIndex] };
+        }
+        return problem;
+      });
+      return { ...topicSection, problems: newProblems };
     });
     setProblemsByTopic(newProblemsByTopic);
   };
@@ -83,31 +92,27 @@ function App() {
     }
   };
 
-  const handleSignUp = async (e) => {
-    e.preventDefault();
-    setError('');
-    try {
-      await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setError(err.message);
-    }
+  const handleSignUp = async (e) => { e.preventDefault(); setError(''); try { await createUserWithEmailAndPassword(auth, email, password); } catch (err) { setError(err.message); } };
+  const handleLogIn = async (e) => { e.preventDefault(); setError(''); try { await signInWithEmailAndPassword(auth, email, password); } catch (err) { setError(err.message); } };
+  const handleLogOut = async () => { await signOut(auth); };
+
+  // Functions to control the notes modal
+  const openNotesModal = (problem) => { setEditingProblem(problem); };
+  const closeNotesModal = () => { setEditingProblem(null); };
+  const handleSaveNote = (problemId, newNoteText) => {
+    const newProblemsByTopic = problemsByTopic.map(topicSection => {
+      const newProblems = topicSection.problems.map(problem => {
+        if (problem.id === problemId) {
+          return { ...problem, notes: newNoteText };
+        }
+        return problem;
+      });
+      return { ...topicSection, problems: newProblems };
+    });
+    setProblemsByTopic(newProblemsByTopic);
   };
 
-  const handleLogIn = async (e) => {
-    e.preventDefault();
-    setError('');
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleLogOut = async () => {
-    await signOut(auth);
-  };
-
-  const allProblems = problemsByTopic.flatMap(topic => topic.problems);
+  const allProblems = Array.isArray(problemsByTopic) ? problemsByTopic.flatMap(topic => topic.problems) : [];
   const stats = {
     untouched: allProblems.filter(p => p.status === 'untouched').length,
     inProgress: allProblems.filter(p => p.status === 'in-progress').length,
@@ -115,7 +120,7 @@ function App() {
   };
 
   if (loading) {
-    return <div className="container loading-screen"></div>; // Or a loading spinner
+    return <div className="container loading-screen"></div>;
   }
 
   if (!user) {
@@ -141,7 +146,6 @@ function App() {
     );
   }
 
-  // --- This is the full tracker UI that shows when you are logged in ---
   return (
     <div className="container">
       <div className="header">
@@ -153,29 +157,14 @@ function App() {
       </div>
 
       <div className="stats-container">
-        <div className="stat-item">
-          <div className="stat-value">{stats.untouched}</div>
-          <div className="stat-label">Untouched</div>
-        </div>
-        <div className="stat-item">
-          <div className="stat-value">{stats.inProgress}</div>
-          <div className="stat-label">In Progress</div>
-        </div>
-        <div className="stat-item">
-          <div className="stat-value">{stats.cleared}</div>
-          <div className="stat-label">Cleared</div>
-        </div>
+        <div className="stat-item"><div className="stat-value">{stats.untouched}</div><div className="stat-label">Untouched</div></div>
+        <div className="stat-item"><div className="stat-value">{stats.inProgress}</div><div className="stat-label">In Progress</div></div>
+        <div className="stat-item"><div className="stat-value">{stats.cleared}</div><div className="stat-label">Cleared</div></div>
       </div>
 
       <form className="mission-form" onSubmit={handleGoalSubmit}>
         <label htmlFor="mission-count">How many questions today?</label>
-        <input 
-          type="number"
-          id="mission-count"
-          value={missionCountInput}
-          onChange={(e) => setMissionCountInput(e.target.value)}
-          min="1"
-        />
+        <input type="number" id="mission-count" value={missionCountInput} onChange={(e) => setMissionCountInput(e.target.value)} min="1"/>
         <button type="submit">Set Goal</button>
       </form>
 
@@ -183,11 +172,7 @@ function App() {
         <div className="daily-mission-container">
           <h2 className="section-title mission-title">Today's Goals</h2>
           {dailyMissions.map(mission => (
-            <ProblemItem
-              key={mission.id}
-              problem={mission}
-              onStatusChange={handleStatusChange}
-            />
+            <ProblemItem key={mission.id} problem={mission} onStatusChange={handleStatusChange} onOpenNotes={openNotesModal} />
           ))}
         </div>
       )}
@@ -197,15 +182,15 @@ function App() {
           <h2 className="section-title">{topicSection.topic}</h2>
           <div className="problem-list">
             {topicSection.problems.map(problem => (
-              <ProblemItem 
-                key={problem.id} 
-                problem={problem} 
-                onStatusChange={handleStatusChange} 
-              />
+              <ProblemItem key={problem.id} problem={problem} onStatusChange={handleStatusChange} onOpenNotes={openNotesModal} />
             ))}
           </div>
         </section>
       ))}
+
+      {editingProblem && (
+        <NotesModal problem={editingProblem} onSave={handleSaveNote} onClose={closeNotesModal} />
+      )}
     </div>
   );
 }
