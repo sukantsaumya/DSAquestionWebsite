@@ -1,12 +1,18 @@
-// src/App.jsx
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './App.css';
 import ProblemItem from './ProblemItem';
 import NotesModal from './NotesModal';
 import { initialProblems } from './data';
 import { auth, db } from './firebase';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  onAuthStateChanged, 
+  signOut,
+  GoogleAuthProvider,
+  GithubAuthProvider,
+  signInWithPopup
+} from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 
 function App() {
@@ -20,11 +26,15 @@ function App() {
   const [missionCountInput, setMissionCountInput] = useState('3');
   const [missionCount, setMissionCount] = useState(3);
   const [dailyMissions, setDailyMissions] = useState([]);
-
-  // State to manage the notes modal
   const [editingProblem, setEditingProblem] = useState(null);
 
+  // State for filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [difficultyFilter, setDifficultyFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+
   useEffect(() => {
+    setLoading(true);
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
@@ -51,10 +61,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || !Array.isArray(problemsByTopic)) return;
+    if (!user || !Array.isArray(problemsByTopic) || loading) return;
     const userDocRef = doc(db, "users", user.uid);
     setDoc(userDocRef, { progress: problemsByTopic });
-  }, [problemsByTopic, user]);
+  }, [problemsByTopic, user, loading]);
 
   useEffect(() => {
     if (!Array.isArray(problemsByTopic)) return;
@@ -96,7 +106,26 @@ function App() {
   const handleLogIn = async (e) => { e.preventDefault(); setError(''); try { await signInWithEmailAndPassword(auth, email, password); } catch (err) { setError(err.message); } };
   const handleLogOut = async () => { await signOut(auth); };
 
-  // Functions to control the notes modal
+  const signInWithGoogle = async () => {
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const signInWithGitHub = async () => {
+    setError('');
+    try {
+      const provider = new GithubAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const openNotesModal = (problem) => { setEditingProblem(problem); };
   const closeNotesModal = () => { setEditingProblem(null); };
   const handleSaveNote = (problemId, newNoteText) => {
@@ -111,6 +140,25 @@ function App() {
     });
     setProblemsByTopic(newProblemsByTopic);
   };
+
+  const filteredProblemsByTopic = useMemo(() => {
+    if (!Array.isArray(problemsByTopic)) return [];
+    return problemsByTopic.map(topicSection => {
+      const filteredProblems = topicSection.problems.filter(problem => {
+        if (difficultyFilter !== 'All' && problem.difficulty !== difficultyFilter) {
+          return false;
+        }
+        if (statusFilter !== 'All' && problem.status !== statusFilter) {
+          return false;
+        }
+        if (searchTerm && !problem.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+          return false;
+        }
+        return true;
+      });
+      return { ...topicSection, problems: filteredProblems };
+    }).filter(topicSection => topicSection.problems.length > 0);
+  }, [problemsByTopic, searchTerm, difficultyFilter, statusFilter]);
 
   const allProblems = Array.isArray(problemsByTopic) ? problemsByTopic.flatMap(topic => topic.problems) : [];
   const stats = {
@@ -140,6 +188,9 @@ function App() {
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required />
             <button type="submit">Sign Up</button>
           </form>
+          <div className="social-login-divider"><span>OR</span></div>
+          <button className="social-button google" onClick={signInWithGoogle}>Sign In with Google</button>
+          <button className="social-button github" onClick={signInWithGitHub}>Sign In with GitHub</button>
           {error && <p className="auth-error">{error}</p>}
         </div>
       </div>
@@ -167,6 +218,34 @@ function App() {
         <input type="number" id="mission-count" value={missionCountInput} onChange={(e) => setMissionCountInput(e.target.value)} min="1"/>
         <button type="submit">Set Goal</button>
       </form>
+      
+      <div className="filter-container">
+        <input
+          type="text"
+          placeholder="Search problems..."
+          className="search-input"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <div className="select-group">
+          <label htmlFor="difficulty-filter">Difficulty:</label>
+          <select id="difficulty-filter" value={difficultyFilter} onChange={(e) => setDifficultyFilter(e.target.value)}>
+            <option value="All">All</option>
+            <option value="Easy">Easy</option>
+            <option value="Medium">Medium</option>
+            <option value="Hard">Hard</option>
+          </select>
+        </div>
+        <div className="select-group">
+          <label htmlFor="status-filter">Status:</label>
+          <select id="status-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="All">All</option>
+            <option value="untouched">Untouched</option>
+            <option value="in-progress">In Progress</option>
+            <option value="cleared">Cleared</option>
+          </select>
+        </div>
+      </div>
 
       {dailyMissions.length > 0 && (
         <div className="daily-mission-container">
@@ -177,7 +256,7 @@ function App() {
         </div>
       )}
 
-      {problemsByTopic.map(topicSection => (
+      {filteredProblemsByTopic.map(topicSection => (
         <section key={topicSection.topic}>
           <h2 className="section-title">{topicSection.topic}</h2>
           <div className="problem-list">
