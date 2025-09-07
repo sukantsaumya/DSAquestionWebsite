@@ -3,15 +3,15 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Your web app's Firebase configuration
+// Read the keys from the environment variables
 const firebaseConfig = {
-  apiKey: "AIzaSyANe3oJcdSIHJt-cq5E2RgxXi_BxSiQGKA",
-  authDomain: "dsa-tracker-c3ee7.firebaseapp.com",
-  projectId: "dsa-tracker-c3ee7",
-  storageBucket: "dsa-tracker-c3ee7.appspot.com",
-  messagingSenderId: "991575019516",
-  appId: "1:991575019516:web:ff60079e1d746577806c79",
-  measurementId: "G-DC2YY1FQ1D"
+  apiKey: import.meta.env.VITE_API_KEY,
+  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_APP_ID,
+  measurementId: import.meta.env.VITE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
