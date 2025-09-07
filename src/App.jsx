@@ -4,62 +4,51 @@ import { useState, useEffect } from 'react';
 import './App.css';
 import ProblemItem from './ProblemItem';
 import { initialProblems } from './data';
-// --- NEW: Import Firebase auth and db services ---
 import { auth, db } from './firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 
 function App() {
-  // --- NEW: State to track the current user ---
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const [problemsByTopic, setProblemsByTopic] = useState(initialProblems); // Default state
+  const [problemsByTopic, setProblemsByTopic] = useState(initialProblems);
   const [missionCountInput, setMissionCountInput] = useState('3');
   const [missionCount, setMissionCount] = useState(3);
   const [dailyMissions, setDailyMissions] = useState([]);
 
-  // --- NEW: This hook listens for login/logout state changes ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        // User is logged in, now load their progress from Firestore
         const userDocRef = doc(db, "users", currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
-          // If they have saved progress, load it
           setProblemsByTopic(userDocSnap.data().progress);
         } else {
-          // New user, set initial progress
+          await setDoc(userDocRef, { progress: initialProblems });
           setProblemsByTopic(initialProblems);
         }
       } else {
         setUser(null);
-        // User is logged out, revert to local storage or initial state
         const savedProgress = localStorage.getItem('dsaProgress');
         setProblemsByTopic(savedProgress ? JSON.parse(savedProgress) : initialProblems);
       }
+      setLoading(false);
     });
-    return () => unsubscribe(); // Cleanup listener on component unmount
+    return () => unsubscribe();
   }, []);
 
-  // This hook now saves progress to Firestore (if logged in) or localStorage (if not)
   useEffect(() => {
-    if (user) {
-      // If user is logged in, save to their Firestore document
-      const userDocRef = doc(db, "users", user.uid);
-      setDoc(userDocRef, { progress: problemsByTopic });
-    } else {
-      // If no user, save to localStorage
-      localStorage.setItem('dsaProgress', JSON.stringify(problemsByTopic));
-    }
+    if (!user) return; // Only save to firestore if a user is logged in
+    const userDocRef = doc(db, "users", user.uid);
+    setDoc(userDocRef, { progress: problemsByTopic });
   }, [problemsByTopic, user]);
 
   useEffect(() => {
-    // Daily mission logic remains the same
     const allProblems = problemsByTopic.flatMap(topic => topic.problems);
     const firstUnfinishedIndex = allProblems.findIndex(p => p.status !== 'cleared');
     let nextMissions = [];
@@ -70,12 +59,35 @@ function App() {
     setDailyMissions(nextMissions);
   }, [problemsByTopic, missionCount]);
 
-  // --- NEW: Authentication Functions ---
+  const handleStatusChange = (id) => {
+    const newProblemsByTopic = problemsByTopic.map(topicSection => {
+        const newProblems = topicSection.problems.map(problem => {
+            if (problem.id === id) {
+                const statuses = ['untouched', 'in-progress', 'cleared'];
+                const currentIndex = statuses.indexOf(problem.status);
+                const nextIndex = (currentIndex + 1) % statuses.length;
+                return { ...problem, status: statuses[nextIndex] };
+            }
+            return problem;
+        });
+        return { ...topicSection, problems: newProblems };
+    });
+    setProblemsByTopic(newProblemsByTopic);
+  };
+
+  const handleGoalSubmit = (e) => {
+    e.preventDefault();
+    const count = parseInt(missionCountInput, 10);
+    if (count > 0) {
+      setMissionCount(count);
+    }
+  };
+
   const handleSignUp = async (e) => {
     e.preventDefault();
+    setError('');
     try {
       await createUserWithEmailAndPassword(auth, email, password);
-      setError('');
     } catch (err) {
       setError(err.message);
     }
@@ -83,9 +95,9 @@ function App() {
 
   const handleLogIn = async (e) => {
     e.preventDefault();
+    setError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      setError('');
     } catch (err) {
       setError(err.message);
     }
@@ -95,13 +107,17 @@ function App() {
     await signOut(auth);
   };
 
-  // The rest of the logic remains the same
-  const handleStatusChange = (id) => { /* ... existing code ... */ };
-  const handleGoalSubmit = (e) => { /* ... existing code ... */ };
   const allProblems = problemsByTopic.flatMap(topic => topic.problems);
-  const stats = { /* ... existing code ... */ };
+  const stats = {
+    untouched: allProblems.filter(p => p.status === 'untouched').length,
+    inProgress: allProblems.filter(p => p.status === 'in-progress').length,
+    cleared: allProblems.filter(p => p.status === 'cleared').length
+  };
 
-  // --- NEW: If no user, show a login/signup form ---
+  if (loading) {
+    return <div className="container loading-screen"></div>; // Or a loading spinner
+  }
+
   if (!user) {
     return (
       <div className="container">
@@ -125,19 +141,71 @@ function App() {
     );
   }
 
-  // If user is logged in, show the main app
+  // --- This is the full tracker UI that shows when you are logged in ---
   return (
     <div className="container">
       <div className="header">
         <h1 className="title">DSA Tracker</h1>
         <div className="header-controls">
-          <p>{user.email}</p>
+          <p className="user-email">{user.email}</p>
           <button onClick={handleLogOut} className="logout-button">Log Out</button>
         </div>
       </div>
 
-      {/* ... Rest of your existing tracker UI ... */}
+      <div className="stats-container">
+        <div className="stat-item">
+          <div className="stat-value">{stats.untouched}</div>
+          <div className="stat-label">Untouched</div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-value">{stats.inProgress}</div>
+          <div className="stat-label">In Progress</div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-value">{stats.cleared}</div>
+          <div className="stat-label">Cleared</div>
+        </div>
+      </div>
 
+      <form className="mission-form" onSubmit={handleGoalSubmit}>
+        <label htmlFor="mission-count">How many questions today?</label>
+        <input 
+          type="number"
+          id="mission-count"
+          value={missionCountInput}
+          onChange={(e) => setMissionCountInput(e.target.value)}
+          min="1"
+        />
+        <button type="submit">Set Goal</button>
+      </form>
+
+      {dailyMissions.length > 0 && (
+        <div className="daily-mission-container">
+          <h2 className="section-title mission-title">Today's Goals</h2>
+          {dailyMissions.map(mission => (
+            <ProblemItem
+              key={mission.id}
+              problem={mission}
+              onStatusChange={handleStatusChange}
+            />
+          ))}
+        </div>
+      )}
+
+      {problemsByTopic.map(topicSection => (
+        <section key={topicSection.topic}>
+          <h2 className="section-title">{topicSection.topic}</h2>
+          <div className="problem-list">
+            {topicSection.problems.map(problem => (
+              <ProblemItem 
+                key={problem.id} 
+                problem={problem} 
+                onStatusChange={handleStatusChange} 
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
